@@ -94,6 +94,13 @@ async function seed() {
   console.log("🌱 Starting seed...");
 
   try {
+    // 0. Force Purge existing exams and attempts to ensure synchronization
+    console.log("🧹 Purging existing assessments and attempts...");
+    await db.execute("DELETE FROM answers");
+    await db.execute("DELETE FROM attempts");
+    await db.execute("DELETE FROM questions WHERE exam_id IS NOT NULL");
+    await db.execute("DELETE FROM exams");
+    
     // 1. Categories
     for (const cat of SECTORS) {
       await db.execute({
