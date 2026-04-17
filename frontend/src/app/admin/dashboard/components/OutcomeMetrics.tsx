@@ -103,7 +103,6 @@ export default function OutcomeMetrics() {
                             outerRadius={90}
                             paddingAngle={8}
                             dataKey="value"
-                            blendStroke
                             animationBegin={0}
                             animationDuration={1500}
                         >
