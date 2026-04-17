@@ -72,7 +72,7 @@ export default function ExamManagement() {
     { title: "Frontend Development", icon: "🌐", description: "Modern UI & Logic", color: "bg-blue-50 text-blue-600", border: "border-blue-100" },
     { title: "Backend Development", icon: "⚙️", description: "APIs & Core Systems", color: "bg-indigo-50 text-indigo-600", border: "border-indigo-100" },
     { title: "Database Management", icon: "🗄️", description: "Data Strategy & SQL", color: "bg-purple-50 text-purple-600", border: "border-purple-100" },
-    { title: "DevOps & Cloud", icon: "☁️", description: "Scale & Deployment", color: "bg-emerald-50 text-emerald-600", border: "border-emerald-100" },
+    { title: "Python Programming", icon: "🐍", description: "Advanced scripting & logic", color: "bg-emerald-50 text-emerald-600", border: "border-emerald-100" },
     { title: "DSA & Logic", icon: "🧮", description: "Problem Solving", color: "bg-amber-50 text-amber-600", border: "border-amber-100" },
   ];
 

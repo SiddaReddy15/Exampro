@@ -38,9 +38,9 @@ export default function QuestionsLanding() {
     },
     { 
         id: "devops",
-        title: "DevOps & Cloud", 
-        icon: <Cpu className="text-emerald-500" />, 
-        description: "Scale & Deployment (Docker, AWS)", 
+        title: "Python Programming", 
+        icon: <Settings className="text-emerald-500" />, 
+        description: "Advanced scripting & logic (Django, FastAPI)", 
         color: "bg-emerald-50 text-emerald-600", 
         border: "border-emerald-100",
         count: 10
