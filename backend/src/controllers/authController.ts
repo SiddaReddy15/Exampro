@@ -2,7 +2,7 @@ import { Request, Response } from "express";
 import bcrypt from "bcryptjs";
 import jwt from "jsonwebtoken";
 import { db } from "../config/db";
-import { v4 as uuidv4 } from "uuid"; // Note: I'll use crypto.randomUUID() instead to avoid dependency issues if uuid is not installed
+import { generateId } from "../utils/idGenerator";
 
 const JWT_SECRET = process.env.JWT_SECRET || "your_super_secret_jwt_key_12345";
 
@@ -20,7 +20,7 @@ export const register = async (req: Request, res: Response) => {
     }
 
     const hashedPassword = await bcrypt.hash(password, 10);
-    const userId = (globalThis as any).crypto?.randomUUID?.() || Math.random().toString(36).substring(2);
+    const userId = generateId();
 
     await db.execute({
       sql: "INSERT INTO users (id, name, email, password, role) VALUES (?, ?, ?, ?, ?)",

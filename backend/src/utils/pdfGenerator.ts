@@ -23,9 +23,9 @@ export const generateResultPDF = (data: any, res: Response) => {
 
   data.answers.forEach((ans: any, index: number) => {
     doc.fontSize(12).text(`${index + 1}. ${ans.question_text}`);
-    doc.text(`Your Answer: ${ans.answer}`, { color: "blue" });
-    doc.text(`Correct Answer: ${ans.correct_answer}`, { color: "green" });
-    doc.text(`Marks: ${ans.marks_awarded} / ${ans.max_marks}`);
+    doc.fillColor("blue").text(`Your Answer: ${ans.answer}`);
+    doc.fillColor("green").text(`Correct Answer: ${ans.correct_answer}`);
+    doc.fillColor("black").text(`Marks: ${ans.marks_awarded} / ${ans.max_marks}`);
     doc.moveDown();
   });
 

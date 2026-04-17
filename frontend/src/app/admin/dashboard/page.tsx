@@ -117,7 +117,7 @@ export default function AdminDashboard() {
         transition={{ delay: 0.35 }}
         className="mt-8"
       >
-        <RecentLiveActivity />
+        <RecentLiveActivity activities={stats?.recentActivity || []} isLoading={isLoading} />
       </motion.div>
     </div>
   );

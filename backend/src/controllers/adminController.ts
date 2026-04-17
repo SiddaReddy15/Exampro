@@ -4,6 +4,7 @@ import { AuthRequest } from "../middleware/authMiddleware";
 import { generateId } from "../utils/idGenerator";
 import { Parser } from "json2csv";
 import * as xlsx from "xlsx";
+import { logActivity } from "../utils/activityLogger";
 
 export const getCategories = async (req: AuthRequest, res: Response) => {
   try {
@@ -55,6 +56,10 @@ export const createExam = async (req: AuthRequest, res: Response) => {
       sql: "INSERT INTO exams (id, title, duration, passing_score, start_time, end_time, category_id, is_published) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
       args: [examId, title, duration, passing_score, start_time, end_time, category_id || null, is_published ? 1 : 0],
     });
+
+    if (req.user) {
+        await logActivity(req.user.id, "CREATED_EXAM", `Created Exam - ${title}`, "SUCCESS");
+    }
 
     // Seed 3 Random Questions from the Repository or Defaults
     const existingQuestions = await db.execute({
@@ -185,6 +190,10 @@ export const addQuestion = async (req: AuthRequest, res: Response) => {
     });
 
     res.status(201).json({ id, message: "Question added successfully" });
+    
+    if (req.user) {
+        await logActivity(req.user.id, "ADDED_QUESTION", `Added Question - ${question_text.substring(0, 30)}...`, "SUCCESS");
+    }
   } catch (error) {
     console.error(error);
     res.status(500).json({ message: "Internal server error" });
@@ -231,6 +240,12 @@ export const publishExam = async (req: AuthRequest, res: Response) => {
     });
 
     console.log(`Exam ${id} publication status changed from ${before.rows[0]?.is_published} to ${after.rows[0]?.is_published}`);
+
+    if (req.user) {
+        const exam = await db.execute({ sql: "SELECT title FROM exams WHERE id = ?", args: [id] });
+        const title = exam.rows[0]?.title || "Unknown Exam";
+        await logActivity(req.user.id, is_published ? "PUBLISHED_EXAM" : "UNPUBLISHED_EXAM", `${is_published ? "Go Live" : "Unpublished"} - ${title}`, "SUCCESS");
+    }
 
     res.json({ 
         message: `Exam ${is_published ? "published" : "unpublished"} successfully`,
@@ -279,15 +294,13 @@ export const getExamStats = async (req: AuthRequest, res: Response) => {
             WHERE a.status = 'SUBMITTED'
         `);
 
-        // Recent Activity
+        // Recent Live Activity
         const recentActivity = await db.execute(`
-            SELECT u.name as student_name, e.title as exam_title, a.submit_time, a.score
-            FROM attempts a
-            JOIN users u ON a.user_id = u.id
-            JOIN exams e ON a.exam_id = e.id
-            WHERE a.status = 'SUBMITTED'
-            ORDER BY a.submit_time DESC
-            LIMIT 5
+            SELECT al.action, al.details as entityTitle, al.status, al.created_at as createdAt, u.name as userName, u.role as userRole
+            FROM activity_log al
+            JOIN users u ON al.user_id = u.id
+            ORDER BY al.created_at DESC
+            LIMIT 10
         `);
 
         res.json({
@@ -394,6 +407,10 @@ export const enrollStudent = async (req: AuthRequest, res: Response) => {
         }
 
         res.json({ message: "Student enrolled successfully. Credentials sent to email." });
+
+        if (req.user) {
+            await logActivity(req.user.id, "ENROLLED_STUDENT", `Enrolled Student - ${name}`, "SUCCESS");
+        }
     } catch (error) {
         console.error("Enrollment error:", error);
         res.status(500).json({ message: "Internal server error" });
@@ -418,6 +435,10 @@ export const deleteExam = async (req: AuthRequest, res: Response) => {
             args: [id]
         });
         res.json({ message: "Exam deleted successfully" });
+
+        if (req.user) {
+            await logActivity(req.user.id, "DELETED_EXAM", `Deleted Exam ID: ${id}`, "SUCCESS");
+        }
     } catch (error) {
         console.error(error);
         res.status(500).json({ message: "Internal server error" });
@@ -445,6 +466,10 @@ export const updateQuestion = async (req: AuthRequest, res: Response) => {
             ]
         });
         res.json({ message: "Question updated successfully" });
+
+        if (req.user) {
+            await logActivity(req.user.id, "UPDATED_QUESTION", `Updated Question - ${question_text.substring(0, 30)}...`, "SUCCESS");
+        }
     } catch (error) {
         console.error(error);
         res.status(500).json({ message: "Internal server error" });
@@ -571,6 +596,10 @@ export const uploadQuestionsExcel = async (req: AuthRequest, res: Response) => {
     }
 
     res.json({ message: `${successCount} questions uploaded successfully` });
+
+    if (req.user) {
+        await logActivity(req.user.id, "BULK_IMPORT", `Bulk Imported ${successCount} Questions`, "SUCCESS");
+    }
   } catch (error: any) {
     console.error("EXCEL_IMPORT_ERROR:", error);
     res.status(500).json({ 

@@ -2,6 +2,7 @@ import { Response } from "express";
 import { db } from "../config/db";
 import { AuthRequest } from "../middleware/authMiddleware";
 import { generateId } from "../utils/idGenerator";
+import { logActivity } from "../utils/activityLogger";
 
 export const getStudentDashboard = async (req: AuthRequest, res: Response) => {
     if (!req.user) return res.status(401).json({ message: "Unauthorized" });
@@ -105,6 +106,12 @@ export const startAttempt = async (req: AuthRequest, res: Response) => {
         });
 
         res.status(201).json({ attemptId, message: "Attempt started" });
+
+        if (req.user) {
+            const exam = await db.execute({ sql: "SELECT title FROM exams WHERE id = ?", args: [exam_id] });
+            const title = exam.rows[0]?.title || "Unknown Exam";
+            await logActivity(req.user.id, "STARTED_ATTEMPT", `Started Attempt - ${title}`, "SUCCESS");
+        }
     } catch (error) {
         console.error(error);
         res.status(500).json({ message: "Internal server error" });
@@ -229,6 +236,12 @@ export const submitAttempt = async (req: AuthRequest, res: Response) => {
             percentage: Number(percentage.toFixed(2)),
             status: status
         });
+
+        if (req.user) {
+            const examData = await db.execute({ sql: "SELECT title FROM exams WHERE id = ?", args: [exam.rows[0].id] });
+            const title = examData.rows[0]?.title || "Unknown Exam";
+            await logActivity(req.user.id, "SUBMITTED_ATTEMPT", `Completed Exam - ${title}`, status === 'PASSED' ? "SUCCESS" : "COMPLETED");
+        }
     } catch (error) {
         console.error("Submit Attempt Error:", error);
         res.status(500).json({ message: "Internal server error" });

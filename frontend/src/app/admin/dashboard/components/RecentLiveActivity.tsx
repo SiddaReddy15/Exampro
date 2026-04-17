@@ -5,30 +5,9 @@ import { formatDistanceToNow, parseISO } from "date-fns";
 import { Activity as ActivityIcon, User, Layers, Calendar, ChevronRight, Loader2, History, AlertCircle } from "lucide-react";
 import { motion, AnimatePresence } from "framer-motion";
 
-export default function RecentLiveActivity() {
-  const [activities, setActivities] = useState<any[]>([]);
-  const [isLoading, setIsLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
-
-  useEffect(() => {
-    const fetchActivities = async () => {
-      setIsLoading(true);
-      setError(null);
-      try {
-        const res = await fetch("/api/admin/recent-activities?range=7");
-        if (!res.ok) throw new Error("Synchronization failure");
-        const data = await res.json();
-        setActivities(data);
-      } catch (err: any) {
-        setError(err.message);
-      } finally {
-        setIsLoading(false);
-      }
-    };
-
-    fetchActivities();
-  }, []);
-
+export default function RecentLiveActivity({ activities = [], isLoading = false, error = null }: { activities?: any[], isLoading?: boolean, error?: string | null }) {
+  // We no longer need local state as we receive data from the parent dashboard
+  
   const getStatusColor = (status: string) => {
     switch (status.toLowerCase()) {
       case 'success':
