@@ -5,7 +5,8 @@ import { adminApi, studentApi } from "@/services/api";
 import { useParams, useRouter } from "next/navigation";
 import { 
     ArrowLeft, Calendar, Clock, Trophy, FileText, 
-    Settings, HelpCircle, ChevronRight, Globe, Lock, Trash2
+    Settings, HelpCircle, ChevronRight, Globe, Lock, Trash2,
+    Activity
 } from "lucide-react";
 import Link from "next/link";
 import { motion } from "framer-motion";
