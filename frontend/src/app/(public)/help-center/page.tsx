@@ -124,7 +124,7 @@ const HelpCenterPage = () => {
                </div>
              </div>
              <div className="relative z-10 hidden lg:block">
-                <div className="w-48 h-48 rounded-full bg-primary-gradient p-1 flex items-center justify-center animate-bounce duration-[3000ms]">
+                <div className="w-48 h-48 rounded-full bg-primary-gradient p-1 flex items-center justify-center animate-bounce duration-[3s]">
                    <div className="w-full h-full rounded-full bg-dark flex items-center justify-center">
                       <GraduationCap size={64} className="text-white" />
                    </div>
