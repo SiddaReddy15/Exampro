@@ -1,0 +1,686 @@
+import { Response } from "express";
+import { db } from "../config/db";
+import { AuthRequest } from "../middleware/authMiddleware";
+import { generateId } from "../utils/idGenerator";
+import { Parser } from "json2csv";
+import * as xlsx from "xlsx";
+
+export const getCategories = async (req: AuthRequest, res: Response) => {
+  try {
+    const result = await db.execute("SELECT * FROM categories ORDER BY name ASC");
+    res.json(result.rows);
+  } catch (error) {
+    console.error(error);
+    res.status(500).json({ message: "Internal server error" });
+  }
+};
+
+export const getQuestionsByCategory = async (req: AuthRequest, res: Response) => {
+  const { categorySlug } = req.params;
+  try {
+    const category = await db.execute({
+      sql: "SELECT id FROM categories WHERE slug = ?",
+      args: [categorySlug]
+    });
+
+    if (category.rows.length === 0) {
+      return res.status(404).json({ message: "Category not found" });
+    }
+
+    const categoryId = category.rows[0].id;
+    const result = await db.execute({
+      sql: "SELECT * FROM questions WHERE category_id = ?",
+      args: [categoryId]
+    });
+
+    const parsedQuestions = result.rows.map((q: any) => ({
+      ...q,
+      options: typeof q.options === 'string' ? JSON.parse(q.options || '[]') : q.options,
+      languages: typeof q.languages === 'string' ? JSON.parse(q.languages || '[]') : q.languages,
+      test_cases: typeof q.test_cases === 'string' ? JSON.parse(q.test_cases || '[]') : q.test_cases
+    }));
+    res.json(parsedQuestions);
+  } catch (error) {
+    console.error(error);
+    res.status(500).json({ message: "Internal server error" });
+  }
+};
+
+export const createExam = async (req: AuthRequest, res: Response) => {
+  const { title, duration, passing_score, start_time, end_time, category_id, is_published } = req.body;
+
+  try {
+    const examId = generateId();
+    await db.execute({
+      sql: "INSERT INTO exams (id, title, duration, passing_score, start_time, end_time, category_id, is_published) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+      args: [examId, title, duration, passing_score, start_time, end_time, category_id || null, is_published ? 1 : 0],
+    });
+
+    // Seed 3 Random Questions from the Repository or Defaults
+    const existingQuestions = await db.execute({
+        sql: "SELECT * FROM questions WHERE category_id = ? LIMIT 10",
+        args: [category_id]
+    });
+
+    if (existingQuestions.rows.length >= 3) {
+        // Shuffle and pick 3
+        const shuffled = existingQuestions.rows.sort(() => 0.5 - Math.random());
+        const selected = shuffled.slice(0, 3);
+        
+        for (const q of selected) {
+            const newQId = generateId();
+            await db.execute({
+                sql: `INSERT INTO questions (
+                    id, exam_id, category_id, type, title, question_text, options, 
+                    correct_answer, explanation, marks, difficulty, languages, 
+                    starter_code, test_cases
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+                args: [
+                    newQId, examId, category_id, q.type, q.title, q.question_text, 
+                    q.options, q.correct_answer, q.explanation, q.marks, 
+                    q.difficulty, q.languages, q.starter_code, q.test_cases
+                ]
+            });
+        }
+    } else {
+        // Create 3 default questions based on the exam title
+        const defaults = [
+            { 
+                type: 'MCQ', 
+                q: `What is the primary purpose of ${title}?`, 
+                options: ['Testing', 'Development', 'Documentation', 'Deployment'], 
+                ans: 'Testing' 
+            },
+            { 
+                type: 'MCQ', 
+                q: `Which of the following is a core concept in ${title}?`, 
+                options: ['Abstraction', 'Compilation', 'Interpretation', 'All of the above'], 
+                ans: 'All of the above' 
+            },
+            { 
+                type: 'CODING', 
+                q: `Implement a basic function named 'diagnostic' that returns the string 'PROCEED' for the context of ${title}.`, 
+                lang: ['javascript', 'python'], 
+                code: "function diagnostic() {\n  return 'PROCEED';\n}" 
+            }
+        ];
+
+        for (const d of defaults) {
+            const newQId = generateId();
+            await db.execute({
+                sql: `INSERT INTO questions (
+                    id, exam_id, category_id, type, question_text, options, 
+                    correct_answer, marks, difficulty, languages, starter_code
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+                args: [
+                    newQId, examId, category_id, d.type, d.q, 
+                    d.options ? JSON.stringify(d.options) : null,
+                    d.ans || null, 2, 'MEDIUM', 
+                    d.lang ? JSON.stringify(d.lang) : null,
+                    d.code || null
+                ]
+            });
+        }
+    }
+
+    res.status(201).json({ id: examId, message: "Exam created and seeded with diagnostic questions" });
+  } catch (error) {
+    console.error(error);
+    res.status(500).json({ message: "Internal server error" });
+  }
+};
+
+export const getExams = async (req: AuthRequest, res: Response) => {
+  const { categoryId } = req.query;
+  try {
+    let sql = "SELECT e.*, c.name as category_name FROM exams e LEFT JOIN categories c ON e.category_id = c.id";
+    let args: any[] = [];
+    
+    if (categoryId) {
+        sql += " WHERE e.category_id = ?";
+        args.push(categoryId);
+    }
+    
+    sql += " ORDER BY e.created_at DESC";
+    
+    const result = await db.execute({ sql, args });
+    res.json(result.rows);
+  } catch (error) {
+    console.error(error);
+    res.status(500).json({ message: "Internal server error" });
+  }
+};
+
+export const addQuestion = async (req: AuthRequest, res: Response) => {
+  const { 
+    exam_id, category_id, type, title, question_text, 
+    options, correct_answer, explanation, marks, 
+    difficulty, languages, starter_code, test_cases 
+  } = req.body;
+
+  try {
+    const id = generateId();
+    await db.execute({
+      sql: `INSERT INTO questions (
+        id, exam_id, category_id, type, title, question_text, 
+        options, correct_answer, explanation, marks, 
+        difficulty, languages, starter_code, test_cases
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      args: [
+        id, 
+        exam_id || null, 
+        category_id || null, 
+        type, 
+        title || null,
+        question_text, 
+        typeof options === 'string' ? options : JSON.stringify(options), 
+        correct_answer || null, 
+        explanation || null, 
+        marks || 1, 
+        difficulty || 'MEDIUM',
+        languages ? JSON.stringify(languages) : null,
+        starter_code || null,
+        test_cases ? JSON.stringify(test_cases) : null
+      ],
+    });
+
+    res.status(201).json({ id, message: "Question added successfully" });
+  } catch (error) {
+    console.error(error);
+    res.status(500).json({ message: "Internal server error" });
+  }
+};
+
+export const updateExam = async (req: AuthRequest, res: Response) => {
+    const { id } = req.params;
+    const { title, duration, passing_score, start_time, end_time, category_id } = req.body;
+
+    try {
+        await db.execute({
+            sql: `UPDATE exams SET 
+                title = ?, duration = ?, passing_score = ?, 
+                start_time = ?, end_time = ?, category_id = ? 
+                WHERE id = ?`,
+            args: [title, duration, passing_score, start_time, end_time, category_id || null, id]
+        });
+        res.json({ message: "Exam updated successfully" });
+    } catch (error) {
+        console.error(error);
+        res.status(500).json({ message: "Internal server error" });
+    }
+};
+
+export const publishExam = async (req: AuthRequest, res: Response) => {
+  const { id } = req.params;
+  const { is_published } = req.body;
+  
+  try {
+    const before = await db.execute({
+        sql: "SELECT is_published FROM exams WHERE id = ?",
+        args: [id]
+    });
+    
+    await db.execute({
+      sql: "UPDATE exams SET is_published = ? WHERE id = ?",
+      args: [is_published ? 1 : 0, id],
+    });
+
+    const after = await db.execute({
+        sql: "SELECT is_published FROM exams WHERE id = ?",
+        args: [id]
+    });
+
+    console.log(`Exam ${id} publication status changed from ${before.rows[0]?.is_published} to ${after.rows[0]?.is_published}`);
+
+    res.json({ 
+        message: `Exam ${is_published ? "published" : "unpublished"} successfully`,
+        is_published: after.rows[0]?.is_published
+    });
+  } catch (error) {
+    console.error(error);
+    res.status(500).json({ message: "Internal server error" });
+  }
+};
+
+export const getExamStats = async (req: AuthRequest, res: Response) => {
+    try {
+        const totalExams = await db.execute("SELECT COUNT(*) as count FROM exams");
+        const totalUsers = await db.execute("SELECT COUNT(*) as count FROM users WHERE role = 'STUDENT'");
+        const totalAttempts = await db.execute("SELECT COUNT(*) as count FROM attempts WHERE status = 'SUBMITTED'");
+        const upcomingExams = await db.execute("SELECT COUNT(*) as count FROM exams WHERE start_time > datetime('now')");
+        
+        // Attempts over the last 7 days
+        const last7Days = await db.execute(`
+            SELECT date(submit_time) as date, COUNT(*) as count 
+            FROM attempts 
+            WHERE status = 'SUBMITTED' 
+            AND submit_time > date('now', '-7 days')
+            GROUP BY date(submit_time)
+            ORDER BY date ASC
+        `);
+
+        // Performance Trends (Avg score over time)
+        const performanceTrends = await db.execute(`
+            SELECT date(submit_time) as date, AVG(score) as avg_score
+            FROM attempts
+            WHERE status = 'SUBMITTED'
+            AND submit_time > date('now', '-30 days')
+            GROUP BY date(submit_time)
+            ORDER BY date ASC
+        `);
+
+        // Pass/Fail stats
+        const passFail = await db.execute(`
+            SELECT 
+                SUM(CASE WHEN a.score >= e.passing_score THEN 1 ELSE 0 END) as passed,
+                SUM(CASE WHEN a.score < e.passing_score THEN 1 ELSE 0 END) as failed
+            FROM attempts a
+            JOIN exams e ON a.exam_id = e.id
+            WHERE a.status = 'SUBMITTED'
+        `);
+
+        // Recent Activity
+        const recentActivity = await db.execute(`
+            SELECT u.name as student_name, e.title as exam_title, a.submit_time, a.score
+            FROM attempts a
+            JOIN users u ON a.user_id = u.id
+            JOIN exams e ON a.exam_id = e.id
+            WHERE a.status = 'SUBMITTED'
+            ORDER BY a.submit_time DESC
+            LIMIT 5
+        `);
+
+        res.json({
+            totalExams: totalExams.rows[0].count,
+            totalUsers: totalUsers.rows[0].count,
+            totalAttempts: totalAttempts.rows[0].count,
+            upcomingExams: upcomingExams.rows[0].count,
+            dailyAttempts: last7Days.rows,
+            performanceTrends: performanceTrends.rows,
+            passRate: {
+                passed: passFail.rows[0].passed || 0,
+                failed: passFail.rows[0].failed || 0
+            },
+            recentActivity: recentActivity.rows
+        });
+    } catch (error) {
+        console.error(error);
+        res.status(500).json({ message: "Internal server error" });
+    }
+};
+
+export const exportStudentsToCSV = async (req: AuthRequest, res: Response) => {
+    try {
+        const query = `
+            SELECT
+                u.id AS "Student ID",
+                u.name AS "Full Name",
+                u.email AS "Email Address",
+                u.created_at AS "Joined Date",
+                COUNT(DISTINCT a.id) AS "Total Exams Taken",
+                ROUND(
+                    COALESCE(SUM(ans.marks_awarded) * 100.0 /
+                    NULLIF(SUM(q.marks), 0), 0),
+                    2
+                ) AS "Average Percentage (%)",
+                ROUND(MAX(lb.score), 2) AS "Highest Score (%)",
+                ROUND(MAX(a.score), 2) AS "Last Exam Score (%)",
+                MAX(a.submit_time) AS "Last Exam Date"
+            FROM users u
+            LEFT JOIN attempts a ON u.id = a.user_id
+            LEFT JOIN answers ans ON ans.attempt_id = a.id
+            LEFT JOIN questions q ON q.id = ans.question_id
+            LEFT JOIN leaderboard lb ON lb.user_id = u.id
+            WHERE u.role = 'STUDENT'
+            GROUP BY u.id
+            ORDER BY "Average Percentage (%)" DESC
+        `;
+        
+        const result = await db.execute(query);
+        const data = result.rows;
+
+        const json2csvParser = new Parser({ withBOM: true });
+        const csv = json2csvParser.parse(data);
+
+        res.header("Content-Type", "text/csv; charset=utf-8");
+        res.attachment(`exampro_academic_report_${new Date().toISOString().split('T')[0]}.csv`);
+        res.send(csv);
+    } catch (error) {
+        console.error("CSV Export error:", error);
+        res.status(500).json({ message: "Internal server error" });
+    }
+};
+
+import { sendEnrollmentEmail } from "../utils/emailService";
+import crypto from "crypto";
+import bcrypt from "bcryptjs";
+
+export const enrollStudent = async (req: AuthRequest, res: Response) => {
+    const { name, email } = req.body;
+
+    try {
+        // Validation
+        if (!name || !email) {
+            return res.status(400).json({ message: "Name and email are required" });
+        }
+
+        // Check for existing user
+        const existingUser = await db.execute({
+            sql: "SELECT id FROM users WHERE email = ?",
+            args: [email]
+        });
+
+        if (existingUser.rows.length > 0) {
+            return res.status(400).json({ message: "Email already exists" });
+        }
+
+        const id = generateId();
+        
+        // Generate secure temporary password
+        const tempPassword = crypto.randomBytes(6).toString("hex"); // e.g., '1a2b3c4d5e6f'
+        const hashedPassword = await bcrypt.hash(tempPassword, 10);
+
+        await db.execute({
+            sql: "INSERT INTO users (id, name, email, password, role) VALUES (?, ?, ?, ?, 'STUDENT')",
+            args: [id, name, email, hashedPassword]
+        });
+
+        // Send Email (Async)
+        try {
+            await sendEnrollmentEmail(email, name, tempPassword);
+        } catch (emailError) {
+            console.error("Failed to send email:", emailError);
+            // We still return success but log the error
+        }
+
+        res.json({ message: "Student enrolled successfully. Credentials sent to email." });
+    } catch (error) {
+        console.error("Enrollment error:", error);
+        res.status(500).json({ message: "Internal server error" });
+    }
+};
+
+export const getStudents = async (req: AuthRequest, res: Response) => {
+    try {
+        const result = await db.execute("SELECT id, name, email, profile_photo, created_at, status, last_active FROM users WHERE role = 'STUDENT' ORDER BY created_at DESC");
+        res.json(result.rows);
+    } catch (error) {
+        console.error(error);
+        res.status(500).json({ message: "Internal server error" });
+    }
+};
+
+export const deleteExam = async (req: AuthRequest, res: Response) => {
+    const { id } = req.params;
+    try {
+        await db.execute({
+            sql: "DELETE FROM exams WHERE id = ?",
+            args: [id]
+        });
+        res.json({ message: "Exam deleted successfully" });
+    } catch (error) {
+        console.error(error);
+        res.status(500).json({ message: "Internal server error" });
+    }
+};
+
+export const updateQuestion = async (req: AuthRequest, res: Response) => {
+    const { id } = req.params;
+    const { 
+        type, title, question_text, options, correct_answer, 
+        explanation, marks, difficulty, languages, starter_code, test_cases 
+    } = req.body;
+
+    try {
+        await db.execute({
+            sql: `UPDATE questions SET 
+                type = ?, title = ?, question_text = ?, options = ?, 
+                correct_answer = ?, explanation = ?, marks = ?, difficulty = ?, 
+                languages = ?, starter_code = ?, test_cases = ? 
+                WHERE id = ?`,
+            args: [
+                type, title, question_text, JSON.stringify(options), 
+                correct_answer, explanation, marks, difficulty, 
+                JSON.stringify(languages), starter_code, JSON.stringify(test_cases), id
+            ]
+        });
+        res.json({ message: "Question updated successfully" });
+    } catch (error) {
+        console.error(error);
+        res.status(500).json({ message: "Internal server error" });
+    }
+};
+
+export const getQuestionById = async (req: AuthRequest, res: Response) => {
+    const { id } = req.params;
+    try {
+        const result = await db.execute({
+            sql: "SELECT * FROM questions WHERE id = ?",
+            args: [id]
+        });
+
+        if (result.rows.length === 0) {
+            return res.status(404).json({ message: "Question not found" });
+        }
+
+        const q = result.rows[0] as any;
+        const parsedQuestion = {
+            ...q,
+            options: typeof q.options === 'string' ? JSON.parse(q.options || '[]') : q.options,
+            languages: typeof q.languages === 'string' ? JSON.parse(q.languages || '[]') : q.languages,
+            test_cases: typeof q.test_cases === 'string' ? JSON.parse(q.test_cases || '[]') : q.test_cases
+        };
+
+        res.json(parsedQuestion);
+    } catch (error) {
+        console.error(error);
+        res.status(500).json({ message: "Internal server error" });
+    }
+};
+
+export const deleteQuestion = async (req: AuthRequest, res: Response) => {
+    const { id } = req.params;
+    try {
+        await db.execute({
+            sql: "DELETE FROM questions WHERE id = ?",
+            args: [id]
+        });
+        res.json({ message: "Question deleted successfully" });
+    } catch (error) {
+        console.error(error);
+        res.status(500).json({ message: "Internal server error" });
+    }
+};
+
+export const getQuestionsByExam = async (req: AuthRequest, res: Response) => {
+    const { examId } = req.params;
+    try {
+        const result = await db.execute({
+            sql: "SELECT * FROM questions WHERE exam_id = ?",
+            args: [examId]
+        });
+
+        const parsedQuestions = result.rows.map((q: any) => ({
+            ...q,
+            options: typeof q.options === 'string' ? JSON.parse(q.options || '[]') : q.options,
+            languages: typeof q.languages === 'string' ? JSON.parse(q.languages || '[]') : q.languages,
+            test_cases: typeof q.test_cases === 'string' ? JSON.parse(q.test_cases || '[]') : q.test_cases
+        }));
+        res.json(parsedQuestions);
+    } catch (error) {
+        console.error(error);
+        res.status(500).json({ message: "Internal server error" });
+    }
+};
+export const uploadQuestionsExcel = async (req: AuthRequest, res: Response) => {
+  if (!req.file) {
+    return res.status(400).json({ message: "No file uploaded" });
+  }
+
+  const { exam_id, category_id } = req.body;
+
+  try {
+    const workbook = xlsx.read(req.file.buffer, { type: "buffer" });
+    const sheetName = workbook.SheetNames[0];
+    const sheet = workbook.Sheets[sheetName];
+    const data: any[] = xlsx.utils.sheet_to_json(sheet);
+
+    if (data.length === 0) {
+      return res.status(400).json({ message: "Excel file is empty" });
+    }
+
+    let successCount = 0;
+
+    for (const item of data) {
+      // Validate mandatory fields
+      if (!item.question_text) continue;
+
+      const id = generateId();
+      
+      // Safe option parsing: handle strings, numbers, or arrays
+      let parsedOptions: string[] = [];
+      if (item.options) {
+          if (typeof item.options === 'string') {
+            parsedOptions = item.options.split(",").map((s: string) => s.trim());
+          } else if (Array.isArray(item.options)) {
+            parsedOptions = item.options;
+          } else {
+            parsedOptions = [String(item.options)];
+          }
+      }
+
+      await db.execute({
+        sql: `INSERT INTO questions (
+                id, exam_id, category_id, type, question_text, options, 
+                correct_answer, explanation, marks, difficulty
+              ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        args: [
+          id,
+          exam_id || null,
+          category_id || null,
+          item.type || "MCQ",
+          item.question_text,
+          JSON.stringify(parsedOptions),
+          String(item.correct_answer || ""),
+          String(item.explanation || ""),
+          Number(item.marks) || 1,
+          String(item.difficulty || 'MEDIUM').toUpperCase()
+        ],
+      });
+      successCount++;
+    }
+
+    res.json({ message: `${successCount} questions uploaded successfully` });
+  } catch (error: any) {
+    console.error("EXCEL_IMPORT_ERROR:", error);
+    res.status(500).json({ 
+        error: "Document Processing Failed",
+        message: error.message || "Please ensure the Excel follows the required schema."
+    });
+  }
+};
+
+export const getAllResults = async (req: AuthRequest, res: Response) => {
+    try {
+        const results = await db.execute(`
+            SELECT a.id, a.exam_id, u.name as student_name, e.title as exam_title, a.score, 
+                   e.passing_score, a.submit_time, a.status
+            FROM attempts a
+            JOIN users u ON a.user_id = u.id
+            JOIN exams e ON a.exam_id = e.id
+            WHERE a.status = 'SUBMITTED'
+            ORDER BY a.submit_time DESC
+        `);
+        res.json(results.rows);
+    } catch (error) {
+        console.error(error);
+        res.status(500).json({ message: "Internal server error" });
+    }
+};
+
+export const exportQuestionsTemplate = async (req: AuthRequest, res: Response) => {
+  try {
+    const template = [
+      {
+        question_text: "What is React?",
+        type: "MCQ",
+        options: "Library, Framework, Language, Database",
+        correct_answer: "Library",
+        explanation: "React is a JavaScript library for building user interfaces.",
+        marks: 5,
+        difficulty: "EASY"
+      },
+      {
+        question_text: "Implement a function that adds two numbers.",
+        type: "CODING",
+        options: "",
+        correct_answer: "",
+        explanation: "Basic addition function.",
+        marks: 10,
+        difficulty: "MEDIUM"
+      }
+    ];
+
+    const worksheet = xlsx.utils.json_to_sheet(template);
+    const workbook = xlsx.utils.book_new();
+    xlsx.utils.book_append_sheet(workbook, worksheet, "Template");
+    const buffer = xlsx.write(workbook, { type: "buffer", bookType: "xlsx" });
+
+    res.setHeader("Content-Disposition", 'attachment; filename="questions_template.xlsx"');
+    res.setHeader("Content-Type", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet");
+    res.send(buffer);
+  } catch (error) {
+    console.error(error);
+    res.status(500).json({ message: "Internal server error" });
+  }
+};
+
+export const getExamAnalytics = async (req: AuthRequest, res: Response) => {
+    const { id: examId } = req.params;
+    try {
+        // Questions with success rate
+        const questions = await db.execute({
+            sql: `
+                SELECT q.id, q.question_text, q.type, q.marks,
+                       COUNT(ans.id) as total_answers,
+                       SUM(CASE WHEN ans.is_correct = 1 THEN 1 ELSE 0 END) as correct_count
+                FROM questions q
+                LEFT JOIN answers ans ON q.id = ans.question_id
+                WHERE q.exam_id = ?
+                GROUP BY q.id
+            `,
+            args: [examId]
+        });
+
+        // Submission stats
+        const submissions = await db.execute({
+            sql: "SELECT COUNT(*) as count, AVG(score) as avg_score FROM attempts WHERE exam_id = ? AND status = 'SUBMITTED'",
+            args: [examId]
+        });
+
+        // Pass/Fail distribution
+        const passFail = await db.execute({
+            sql: `
+                SELECT 
+                    SUM(CASE WHEN a.score >= e.passing_score THEN 1 ELSE 0 END) as passed,
+                    SUM(CASE WHEN a.score < e.passing_score THEN 1 ELSE 0 END) as failed
+                FROM attempts a
+                JOIN exams e ON a.exam_id = e.id
+                WHERE a.exam_id = ? AND a.status = 'SUBMITTED'
+            `,
+            args: [examId]
+        });
+
+        res.json({
+            questions: questions.rows,
+            summary: submissions.rows[0],
+            distribution: {
+                passed: passFail.rows[0].passed || 0,
+                failed: passFail.rows[0].failed || 0
+            }
+        });
+    } catch (error) {
+        console.error(error);
+        res.status(500).json({ message: "Internal server error" });
+    }
+};
